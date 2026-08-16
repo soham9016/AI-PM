@@ -7,11 +7,11 @@ __pycache__/
 .venv/
 venv/
 env/
+testenv/
 *.egg-info/
 
 # Runtime data
 data/business.db
-data/chroma_db/
 data/charts/*.png
 data/brief_*.md
 run_log.txt

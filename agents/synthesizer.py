@@ -52,7 +52,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config import get_llm
 from tools.db import get_facts, get_findings
-from tools.rag_retriever import retrieve_framework_notes
 from utils.logger import run_logger
 from utils.parsing import safe_extract_json
 from utils.retry import with_retry
@@ -185,13 +184,12 @@ def _call_verdict_llm(hypothesis: dict, findings: list[dict], facts: list[dict])
 
 @with_retry()
 def _call_writeup_llm(
-    verdicts: list[dict], framework_notes, revision_note: str | None, unexamined_branches: list[str]
+    verdicts: list[dict], revision_note: str | None, unexamined_branches: list[str]
 ) -> str:
     llm = get_llm(AGENT_NAME)
     content = (
         f"Verdicts:\n{verdicts}\n\n"
-        f"Unexamined branches (no hypothesis was written for these):\n{unexamined_branches}\n\n"
-        f"Framework guidance:\n{framework_notes}"
+        f"Unexamined branches (no hypothesis was written for these):\n{unexamined_branches}"
     )
     if revision_note:
         content += f"\n\nA previous review flagged this issue with your prior write-up — address it:\n{revision_note}"
@@ -294,8 +292,7 @@ def synthesizer_node(state: dict) -> dict:
     covered_branches = {h.get("branch") for h in hypotheses if h.get("branch")}
     unexamined_branches = sorted(branch_names - covered_branches)
 
-    notes = retrieve_framework_notes("Pyramid Principle governing thought key line answer first")
-    writeup_raw = _call_writeup_llm(verdicts, notes, revision_note, unexamined_branches)
+    writeup_raw = _call_writeup_llm(verdicts, revision_note, unexamined_branches)
     writeup = safe_extract_json(writeup_raw)
 
     synthesis = {

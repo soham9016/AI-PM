@@ -75,7 +75,6 @@ import logging
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config import get_llm
-from tools.rag_retriever import retrieve_framework_notes
 from utils.logger import run_logger
 from utils.parsing import safe_extract_json
 from utils.retry import with_retry
@@ -183,7 +182,7 @@ Respond with ONLY a JSON object of this exact shape:
 
 @with_retry()
 def _call_llm(
-    problem_statement, issue_tree, synthesis, solutions, competitive_audit, framework_notes,
+    problem_statement, issue_tree, synthesis, solutions, competitive_audit,
     revision_note: str | None,
 ) -> str:
     llm = get_llm(AGENT_NAME)
@@ -192,8 +191,7 @@ def _call_llm(
         f"Issue tree:\n{issue_tree}\n\n"
         f"Synthesis (diagnostic mode; may be empty):\n{synthesis}\n\n"
         f"Candidate solutions (PM mode; may be empty):\n{solutions}\n\n"
-        f"Competitive audit (PM mode; may be empty):\n{competitive_audit}\n\n"
-        f"Framework guidance:\n{framework_notes}"
+        f"Competitive audit (PM mode; may be empty):\n{competitive_audit}"
     )
     if revision_note:
         content += f"\n\nA previous review flagged this issue with your prior PRD — address it:\n{revision_note}"
@@ -445,7 +443,6 @@ def pm_node(state: dict) -> dict:
     'differentiation', and, when applicable, a competitive impact cap;
     PRD gains 'header' and 'north_star_metric'), state['messages'], state['run_path']
     """
-    notes = retrieve_framework_notes("RICE scoring reach impact confidence effort north star guardrail metrics")
     revision_note = state.get("revision_notes", {}).get(AGENT_NAME)
 
     hypotheses = state.get("hypotheses", [])
@@ -455,7 +452,7 @@ def pm_node(state: dict) -> dict:
 
     raw = _call_llm(
         state["problem_statement"], state.get("issue_tree", {}), synthesis, solutions,
-        competitive_audit, notes, revision_note,
+        competitive_audit, revision_note,
     )
     parsed = safe_extract_json(raw)
 

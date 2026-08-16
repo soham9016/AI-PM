@@ -56,8 +56,7 @@ Python, LangGraph, LangChain, Groq (free tier) for LLM inference — with
 an optional second provider (Cerebras, for large-payload calls) that
 `config.py` can route any agent to per-entry, with invocation-time
 fallback back to Groq if it fails (see the design note below) — Tavily
-for search, SQLite for the evidence base, Chroma (local embeddings) for
-RAG over framework notes, Streamlit for the UI.
+for search, SQLite for the evidence base, Streamlit for the UI.
 
 ## Setup
 
