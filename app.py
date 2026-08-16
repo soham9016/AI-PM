@@ -15,7 +15,10 @@ import re
 from pathlib import Path
 
 import streamlit as st
-
+import os
+for _key in ("GROQ_API_KEY", "TAVILY_API_KEY", "CEREBRAS_API_KEY"):
+    if _key in st.secrets and not os.environ.get(_key):
+        os.environ[_key] = str(st.secrets[_key])
 import config
 from graph import build_graph
 from state import new_state
