@@ -1,0 +1,24 @@
+# Env / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Runtime data
+data/business.db
+data/chroma_db/
+data/charts/*.png
+data/brief_*.md
+run_log.txt
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code local session state (permissions/paths are machine-local)
+.claude/

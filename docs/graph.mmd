@@ -1,0 +1,50 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	engagement_manager(engagement_manager)
+	structurer(structurer)
+	hypothesis(hypothesis)
+	researcher(researcher)
+	analyst(analyst)
+	synthesizer(synthesizer)
+	funnel_decomposition(funnel_decomposition)
+	primary_research(primary_research)
+	competitive_audit(competitive_audit)
+	solution_framing(solution_framing)
+	pm(pm)
+	solution_review(solution_review)
+	critic(critic)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> engagement_manager;
+	analyst --> engagement_manager;
+	competitive_audit --> engagement_manager;
+	critic --> engagement_manager;
+	engagement_manager -.-> __end__;
+	engagement_manager -.-> analyst;
+	engagement_manager -.-> competitive_audit;
+	engagement_manager -.-> critic;
+	engagement_manager -.-> funnel_decomposition;
+	engagement_manager -.-> hypothesis;
+	engagement_manager -.-> pm;
+	engagement_manager -.-> primary_research;
+	engagement_manager -.-> researcher;
+	engagement_manager -.-> solution_framing;
+	engagement_manager -.-> solution_review;
+	engagement_manager -.-> structurer;
+	engagement_manager -.-> synthesizer;
+	funnel_decomposition --> engagement_manager;
+	hypothesis --> engagement_manager;
+	pm --> engagement_manager;
+	primary_research --> engagement_manager;
+	researcher --> engagement_manager;
+	solution_framing --> engagement_manager;
+	solution_review --> engagement_manager;
+	structurer --> engagement_manager;
+	synthesizer --> engagement_manager;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
