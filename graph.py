@@ -14,9 +14,19 @@ node-by-node.
 Callers do:
     app = build_graph()
     result = app.invoke(new_state("..."))
+
+build_graph() also calls config.validate_models() -- catches a stale/
+deprecated/nonexistent model name in config.py's MODELS at launch,
+not three agents into a run (see config.py's module docstring for why:
+four distinct provider failures in three days, this one specifically
+answering "Groq deprecated a model out from under us"). Cached after the
+first call in a process, so this doesn't add a network round-trip on
+every graph build (e.g. the Streamlit app rebuilding the graph on every
+click).
 """
 from langgraph.graph import StateGraph, END
 
+from config import validate_models
 from state import EngagementState
 from routing import route_from_manager
 from agents.engagement_manager import engagement_manager_node
@@ -49,6 +59,7 @@ WORKERS = {
 }
 
 def build_graph(checkpointer=None):
+    validate_models()
     graph = StateGraph(EngagementState)
     graph.add_node("engagement_manager", engagement_manager_node)
     for name, fn in WORKERS.items():

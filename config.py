@@ -37,6 +37,22 @@ succeed on a second identical attempt).
 DISABLE_NON_GROQ_PROVIDERS: set this env var (any of "1"/"true"/"yes")
 to force every agent onto Groq regardless of its MODELS entry — a single
 switch for "Cerebras is having a bad day, just run pure-Groq."
+
+validate_models() — CATCH A DEAD MODEL NAME AT LAUNCH, NOT MID-RUN: this
+is the fourth distinct provider failure in three days (stale model name,
+account quota, daily token ceiling, and now Groq deprecating both
+llama-3.1-8b-instant and llama-3.3-70b-versatile outright). invoke_llm's
+fallback covers a model failing AFTER a run has started; it does nothing
+for "half of MODELS points at a model that no longer exists" being
+discovered three agents into a 5-10 minute run. validate_models() fetches
+each active provider's live model list ONCE per process (module-level
+cache; graph.py's build_graph() calls it unconditionally, including from
+the Streamlit app, which calls build_graph() on every click — the cache
+is what keeps that cheap) and logs one clear error listing every
+MODELS[*]['model']/['groq_fallback_model']/FALLBACK value that isn't on
+it. Logs only, never raises: a provider outage during THIS check must not
+block startup any more than a bad model should block the whole run --
+this is an early warning, not a gate.
 """
 
 import logging
@@ -75,32 +91,37 @@ SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "tavily")
 # provider="cerebras" entries -- it's what gets used if Cerebras is
 # unavailable for any reason.
 MODELS: dict[str, dict] = {
-    # Reasoning-heavy → gpt-oss-120b on GROQ (separate quota from 70b)
+    # Reasoning-heavy
     "structurer":                 {"provider": "groq", "model": "openai/gpt-oss-120b"},
     "funnel_decomposition":       {"provider": "groq", "model": "openai/gpt-oss-120b"},
     "solution_framing":           {"provider": "groq", "model": "openai/gpt-oss-120b"},
     "solution_review":            {"provider": "groq", "model": "openai/gpt-oss-120b"},
     "pm":                         {"provider": "groq", "model": "openai/gpt-oss-120b"},
+    "primary_research":   {"provider": "groq", "model": "openai/gpt-oss-20b"},
     "competitive_audit_classify": {"provider": "groq", "model": "openai/gpt-oss-120b"},
-    "primary_research":   {"provider": "groq", "model": "openai/gpt-oss-120b"},
 
-    # High-volume, narrow → 8b (14,400 RPD)
-    "evidence_extractor": {"provider": "groq", "model": "llama-3.1-8b-instant"},
-    "researcher":         {"provider": "groq", "model": "llama-3.1-8b-instant"},
+    # Mid — separate quota bucket, keeps 120b from being the only ceiling
     
-    "competitive_audit":  {"provider": "groq", "model": "llama-3.1-8b-instant"},
-    "critic":             {"provider": "groq", "model": "llama-3.1-8b-instant"},
+    "critic":                     {"provider": "groq", "model": "qwen/qwen3.6-27b"},
+    "synthesizer":                {"provider": "groq", "model": "qwen/qwen3.6-27b"},
 
-    # Diagnostic mode only — never runs on a PM problem, leave alone
-    "hypothesis":  {"provider": "groq", "model": "llama-3.3-70b-versatile"},
-    "analyst":     {"provider": "groq", "model": "llama-3.3-70b-versatile"},
-    "synthesizer": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
+    # High-volume, narrow — replaces llama-3.1-8b-instant
+    "evidence_extractor": {"provider": "groq", "model": "openai/gpt-oss-20b"},
+    "researcher":         {"provider": "groq", "model": "openai/gpt-oss-20b"},
+    
+    "competitive_audit":  {"provider": "groq", "model": "openai/gpt-oss-20b"},
+
+    # Diagnostic mode only
+    "hypothesis": {"provider": "groq", "model": "openai/gpt-oss-120b"},
+    "analyst":    {"provider": "groq", "model": "qwen/qwen3.6-27b"},
 }
 
 # Used when an agent's preferred model is unavailable / repeatedly errors
 # out (the retry decorator's use_fallback path) -- always Groq, regardless
-# of the agent's normal provider.
-FALLBACK = "llama-3.1-8b-instant"
+# of the agent's normal provider. llama-3.1-8b-instant (the previous
+# value) was deprecated off Groq entirely -- caught by validate_models()
+# below, fixed here to the smallest/fastest model still live.
+FALLBACK = "openai/gpt-oss-20b"
 
 DEFAULT_TEMPERATURE = 0.2
 
@@ -218,3 +239,101 @@ def invoke_llm(agent_name: str, messages: list, temperature: float = DEFAULT_TEM
             agent_name, type(exc).__name__, exc, fallback_model,
         )
         return _groq_llm(fallback_model, temperature, json_mode).invoke(messages)
+
+
+_CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+_models_validated = False  # module-level cache -- see validate_models()
+
+
+def _fetch_groq_model_ids() -> set[str] | None:
+    """Live model IDs from Groq's own /models endpoint, or None if the
+    fetch couldn't happen (no key, network/API error) -- never raises."""
+    if not GROQ_API_KEY:
+        return None
+    try:
+        from groq import Groq
+        return {m.id for m in Groq(api_key=GROQ_API_KEY).models.list().data}
+    except Exception as exc:  # noqa: BLE001 — a validation-only call must never block startup
+        logger.warning("validate_models: Groq model-list fetch failed (%s: %s) — skipping model validation this run", type(exc).__name__, exc)
+        return None
+
+
+def _fetch_cerebras_model_ids() -> set[str] | None:
+    """Live model IDs from Cerebras's OpenAI-compatible /models endpoint
+    (langchain_cerebras has no models.list() of its own -- it wraps
+    BaseChatOpenAI, so the plain openai client works directly against the
+    same base_url), or None if the fetch couldn't happen."""
+    if not CEREBRAS_API_KEY:
+        return None
+    try:
+        import openai
+        client = openai.OpenAI(api_key=CEREBRAS_API_KEY, base_url=_CEREBRAS_BASE_URL)
+        return {m.id for m in client.models.list().data}
+    except Exception as exc:  # noqa: BLE001 — same rule: never block startup over this
+        logger.warning("validate_models: Cerebras model-list fetch failed (%s: %s) — skipping Cerebras model validation this run", type(exc).__name__, exc)
+        return None
+
+
+def validate_models(force: bool = False) -> list[str]:
+    """Fetch each active provider's live model list ONCE per process and
+    log a single clear error listing every model name this config
+    references that isn't actually live — every MODELS[*]['model'],
+    every MODELS[*]['groq_fallback_model'], and FALLBACK. Cached after
+    the first call (module-level flag) so graph.py's build_graph()
+    calling this unconditionally on every invocation — including from
+    the Streamlit app, which rebuilds the graph on every click — costs
+    one network round-trip per process, not one per click. Pass
+    force=True to bypass the cache (e.g. after editing MODELS at
+    runtime).
+
+    Returns the list of problem strings found (empty if everything
+    checks out, or if a fetch failed and the check had to be skipped —
+    check the log for which). Never raises: a provider outage during
+    THIS check must not block startup any more than a bad model should
+    block the whole run — this is an early warning, not a gate.
+    """
+    global _models_validated
+    if _models_validated and not force:
+        return []
+    _models_validated = True
+
+    groq_ids = _fetch_groq_model_ids()
+    if groq_ids is None:
+        logger.warning("validate_models: skipped (Groq model list unavailable) — a bad model name will only surface at invocation time now")
+        return []
+
+    problems: list[str] = []
+    for agent_name, entry in MODELS.items():
+        provider = entry.get("provider", "groq")
+        model = entry.get("model")
+        if provider == "groq" and model and model not in groq_ids:
+            problems.append(f"MODELS[{agent_name!r}]['model'] = {model!r} is not a live Groq model")
+        fallback_model = entry.get("groq_fallback_model")
+        if fallback_model and fallback_model not in groq_ids:
+            problems.append(f"MODELS[{agent_name!r}]['groq_fallback_model'] = {fallback_model!r} is not a live Groq model")
+
+    if FALLBACK not in groq_ids:
+        problems.append(f"FALLBACK = {FALLBACK!r} is not a live Groq model")
+
+    # Only fetch Cerebras's list if something actually routes there and a
+    # key is set -- no point paying for a network call for a provider
+    # nothing in MODELS currently uses.
+    cerebras_entries = {name: e for name, e in MODELS.items() if e.get("provider") == "cerebras"}
+    if cerebras_entries and CEREBRAS_API_KEY:
+        cerebras_ids = _fetch_cerebras_model_ids()
+        if cerebras_ids is not None:
+            for agent_name, entry in cerebras_entries.items():
+                model = entry.get("model")
+                if model and model not in cerebras_ids:
+                    problems.append(f"MODELS[{agent_name!r}]['model'] = {model!r} is not a live Cerebras model")
+
+    if problems:
+        logger.error(
+            "validate_models: %d stale/nonexistent model name(s) in config.py's MODELS — these WILL "
+            "fail at invocation time, not just log a warning here:\n  %s",
+            len(problems), "\n  ".join(problems),
+        )
+    else:
+        logger.info("validate_models: every configured model name is live on its provider")
+
+    return problems
