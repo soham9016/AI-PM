@@ -71,6 +71,20 @@ returning None for a branch with no comparable evidence *is* this case —
 that branch's name goes to `unclassified_branches` instead of `areas`,
 so no classification means no impact cap, not a guessed one.
 
+EVIDENCE MUST ACTUALLY NAME THE COMPETITOR IT'S TAGGED FOR: a finding is
+tagged hypothesis_id="competitor:<slug>" based on which competitor the
+QUERY that surfaced it targeted, not on anything checked about the page
+itself. Observed failure: a Flipkart-targeted query surfaced "CouponDunia:
+Best Cashback & Coupons Site" -- a coupon aggregator that merely mentioned
+Flipkart in passing -- which got accepted as Flipkart evidence with no
+check and classified Flipkart "full" on Trust & Security and Incentives.
+_competitor_named_in_evidence requires the competitor's name to actually
+appear in the page title, domain, or claim text before a finding counts as
+evidence about them; anything that fails is excluded from classification
+and logged (competitor_evidence_misattributed), and a competitor whose
+only "evidence" was misattributed correctly ends up in
+competitors_with_no_evidence rather than looking covered.
+
 COMPETITOR NAMES ARE STRIPPED OF A LEAKED "Competitor: " PREFIX: both
 prompts' JSON-shape examples used to use "Competitor A"/"Competitor B" as
 placeholder names, which the model sometimes echoed literally (e.g.
@@ -82,6 +96,7 @@ call, regardless of whether the prompt fix alone was enough.
 
 import logging
 import re
+from urllib.parse import urlparse
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -210,6 +225,39 @@ def _strip_competitor_prefix(name: str) -> str:
     call, regardless of whether the prompt's example-name fix alone was
     enough to stop it."""
     return _COMPETITOR_PREFIX_RE.sub("", name or "").strip()
+
+
+def _normalize_name_token(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _competitor_named_in_evidence(competitor: str, finding: dict) -> bool:
+    """Deterministic backstop, same pattern as tools/evidence_extractor.py's
+    _grounded_in_page: a finding tagged hypothesis_id="competitor:<slug>"
+    was extracted from a page fetched for a query TARGETING that
+    competitor, but the query targeting them doesn't guarantee the page
+    is actually ABOUT them. Observed failure: a Flipkart-targeted query
+    surfaced "CouponDunia: Best Cashback & Coupons Site" -- a coupon
+    aggregator that merely mentioned Flipkart in passing -- and it was
+    accepted as Flipkart evidence with no check, then classified Flipkart
+    "full" on Trust & Security and Incentives. Require the competitor's
+    name to actually appear in the page title, the page's domain, or the
+    claim text itself before a piece of evidence counts as being about
+    that competitor; a page that only mentions them in passing does not
+    qualify."""
+    token = _normalize_name_token(competitor)
+    if not token:
+        return False
+    title = _normalize_name_token(finding.get("source_name") or "")
+    if token in title:
+        return True
+    domain = urlparse(finding.get("source_url") or "").netloc.lower()
+    if token in domain.replace(".", "").replace("-", ""):
+        return True
+    claim = (finding.get("claim") or "").lower()
+    if competitor.strip().lower() in claim:
+        return True
+    return False
 
 
 @with_retry()
@@ -456,11 +504,31 @@ def competitive_audit_node(state: dict) -> dict:
 
     all_findings = get_findings_for_run(run_id) if run_id else []
     competitor_topic_ids = {f"competitor:{_slugify(c)}" for c in competitors}
+    competitor_by_topic_id = {f"competitor:{_slugify(c)}": c for c in competitors}
     branch_keywords = {branch: _branch_keywords(branch, issue_tree) for branch in branches}
     evidence_by_branch: dict[str, list[dict]] = {branch: [] for branch in branches}
+    validated_topic_ids: set[str] = set()
+    misattributed_count = 0
     for finding in all_findings:
-        if finding.get("hypothesis_id") not in competitor_topic_ids:
+        topic_id = finding.get("hypothesis_id")
+        if topic_id not in competitor_topic_ids:
             continue
+        # Before this evidence counts as being ABOUT the competitor its
+        # topic_id names, verify the name actually appears in the source
+        # (title/domain/claim) -- a query targeting a competitor doesn't
+        # guarantee the page fetched for it is actually about them (see
+        # _competitor_named_in_evidence's docstring for the real failure
+        # this replaces). Reject and log, same backstop pattern as
+        # tools/evidence_extractor.py's grounding check.
+        if not _competitor_named_in_evidence(competitor_by_topic_id[topic_id], finding):
+            misattributed_count += 1
+            logger.warning(
+                "competitor_evidence_misattributed: finding %s tagged %r but %r does not appear "
+                "in the source title/domain/claim (%s) -- excluded from classification",
+                finding.get("id"), topic_id, competitor_by_topic_id[topic_id], finding.get("source_url"),
+            )
+            continue
+        validated_topic_ids.add(topic_id)
         # Only fan a finding into a branch it's actually relevant to (see
         # module docstring for the "wrong branch" failure this replaces).
         # Capped and truncated per branch (see MAX_EVIDENCE_PER_BRANCH_FOR_CLASSIFY
@@ -544,9 +612,11 @@ def competitive_audit_node(state: dict) -> dict:
     # unqueried_competitors above (zero queries planned) -- surface it
     # explicitly rather than letting the competitor just never appear in
     # any area's competitors list.
-    evidenced_topic_ids = {f.get("hypothesis_id") for f in all_findings if f.get("hypothesis_id") in competitor_topic_ids}
+    # validated_topic_ids, not all_findings -- a competitor whose only
+    # "evidence" was misattributed (name never actually appeared in the
+    # source) must show up here as having no evidence, not as covered.
     competitors_with_no_evidence = [
-        c for c in competitors if f"competitor:{_slugify(c)}" not in evidenced_topic_ids
+        c for c in competitors if f"competitor:{_slugify(c)}" not in validated_topic_ids
     ]
 
     audit = {
@@ -571,6 +641,7 @@ def competitive_audit_node(state: dict) -> dict:
         unclassified_branches=unclassified_branches,
         evidence_findings_inserted=inserted_findings,
         evidence_rejected=rejected,
+        evidence_misattributed=misattributed_count,
         extraction_errors=extraction_errors,
         areas_classified=len(areas),
     )

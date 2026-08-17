@@ -1,4 +1,4 @@
-# Business Research & Analysis Copilot
+# Multi-Agent PM Research Assistant
 
 An agentic business research/analysis system built on LangGraph. Given a
 business problem statement, it classifies what KIND of problem it is,

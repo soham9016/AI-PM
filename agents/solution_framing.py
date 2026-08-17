@@ -72,6 +72,19 @@ itself, tagged is_instrumentation=True so agents/pm.py and
 agents/solution_review.py can each give it their own guarantee in turn
 (a guaranteed feature, and immunity from the kill review — see their
 docstrings).
+
+INSTRUMENTATION IS NOT THE ONLY OUTPUT WHEN UNDETERMINED: observed
+failure — with funnel_verdict=="undetermined", the prompt's OLD wording
+("YOU MUST include at least one is_instrumentation solution") was read
+as license to propose ONLY that, nothing else. Telling a PM to go look at
+their own analytics, with no hypotheses to test once they do, wastes the
+external research that already surfaced real friction signals. The
+SYSTEM_PROMPT's FUNNEL DISCIPLINE section now explicitly requires
+hypothesis-driven solutions from whatever friction signals the evidence
+DOES contain ALONGSIDE the instrumentation solution — each stating which
+stage it would address IF that stage turns out to be the drop —
+reframing instrumentation as "run this to decide between these
+hypotheses," not as the answer itself.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -115,10 +128,30 @@ is the exact failure this exists to prevent. If funnel_verdict is
 "undetermined", that means the evidence does not distinguish between
 stages — in that case, YOU MUST include at least one solution with
 is_instrumentation=true that says what to measure, at which stage(s),
-and what result would identify the drop being at that stage. This is a
-legitimate, valuable recommendation, not a fallback for having nothing
-else to say — do not treat "undetermined" as a reason to fall back to
-generic, untargeted build solutions instead.
+and what result would identify the drop being at that stage. Also
+propose hypothesis-driven solutions from whatever friction signals the
+evidence DOES contain (see SIGNALS, NOT JUST DIRECT PROOF below), each
+stating which stage it would address IF that stage turns out to be the
+drop — instrumentation tells you which hypothesis to believe, it is not
+a replacement for having hypotheses. Frame the instrumentation item as
+"run this to decide between these hypotheses," not as the only output.
+
+SIGNALS, NOT JUST DIRECT PROOF: the evidence available to you (app-store
+reviews, forum posts, industry commentary) gives SIGNALS of friction, not
+statistical proof that a specific problem exists. Do not limit yourself
+to proposing a solution only when a finding directly names the exact
+problem — a real friction point that is ADJACENT to the stated problem
+is still a legitimate basis for a solution, as long as you explain the
+connection. Worked example: evidence says "users complain heavily about
+return and exchange policy" — even though nothing in that evidence
+mentions checkout or cart abandonment, a reasonable solution is "add
+clear return-policy reassurance at the Cart stage to reduce commitment
+anxiety and improve Proceed-to-Checkout rate," with evidence_rationale
+explaining that return/exchange anxiety plausibly creates hesitation
+before completing a purchase, even though the evidence doesn't say
+"checkout" directly. State that reasoning explicitly in
+evidence_rationale rather than only citing the finding_id — a downstream
+reviewer needs to see the inferential step, not just the citation.
 
 Each solution MUST state:
   - branch: which issue-tree branch / capability area it addresses
@@ -128,6 +161,13 @@ Each solution MUST state:
     Never invent one. If you have no supporting evidence, leave this
     empty rather than citing something not given to you — an empty list
     is honest; a made-up id is not.
+  - evidence_rationale: REQUIRED whenever finding_ids is non-empty —
+    explain HOW the cited evidence bears on this solution's problem,
+    even (especially) when the connection is inferential rather than a
+    direct statement. If the evidence names this exact problem, say so
+    plainly. If it's an adjacent friction point (see SIGNALS, NOT JUST
+    DIRECT PROOF above), spell out the inferential step explicitly rather
+    than leaving it implicit. Empty string only when finding_ids is empty.
   - required: true if this is regulation-mandated (i.e. the branch's
     primary-research evidence traces to an actual legal/regulatory
     requirement), false if it's optional/discretionary.
@@ -179,6 +219,7 @@ Respond with ONLY a JSON object of this exact shape:
       "name": "<short solution name>",
       "problem_addressed": "<the problem this solves>",
       "finding_ids": ["finding:12", "fact:5"],
+      "evidence_rationale": "<how the cited evidence bears on this problem, spelling out any inferential step; empty string if finding_ids is empty>",
       "required": true,
       "status": "new|partial|exists",
       "current_state_evidence_id": "finding:8 (or null if status is new)",
@@ -351,6 +392,7 @@ def _ensure_instrumentation_solution(solutions: list[dict], funnel: dict, funnel
             f"the drop is at — building before knowing where would be a guess, not a fix."
         ),
         "finding_ids": [],
+        "evidence_rationale": "",
         "required": False,
         "status": "new",
         "current_state_evidence_id": None,
@@ -437,6 +479,7 @@ def _ensure_solutions(solutions: list[dict]) -> list[dict]:
             "name": "No candidate solution could be framed",
             "problem_addressed": "No evidence supported a concrete solution for any branch.",
             "finding_ids": [],
+            "evidence_rationale": "",
             "required": False,
             "status": "new",
             "current_state_evidence_id": None,

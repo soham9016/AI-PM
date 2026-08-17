@@ -130,7 +130,7 @@ def _run_analysis(problem_statement: str, progress_area) -> dict | None:
 
 
 st.set_page_config(page_title="Business Copilot", layout="wide")
-st.title("Business Research & Analysis Copilot")
+st.title("Multi-Agent PM Research Assistant")
 
 missing = _missing_keys()
 if missing:

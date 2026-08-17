@@ -371,6 +371,9 @@ def _render_feature(feature: dict, result: dict, db_path=None) -> list[str]:
         )
 
     lines.append(f"\n**Evidence strength:** {feature.get('evidence_strength', '')}")
+    signal_strength = feature.get("signal_strength")
+    if signal_strength:
+        lines.append(f"  \n**Signal strength:** {signal_strength}")
     return lines
 
 

@@ -12,13 +12,23 @@ state['dropped_solutions'] before the brief ever renders anything — pm_node
 scoring it first internally is invisible to the delivered output.
 
 THREE TESTS, ONE VERDICT PER SOLUTION (promote / keep / kill):
-  a) PROBLEM EXISTS FOR THIS COMPANY — does the cited evidence show this
-     specific problem is real here, or only that the general topic/
-     technology exists somewhere? Observed failure: a feature ranked #1
-     (RICE 32000) on evidence that was (i) an unrelated claim about the
-     company using ML for scheduling/nutrition and (ii) a competitor's
-     schedule-change announcement — nothing established the feature's own
-     problem was real, yet it was labeled evidence_backed.
+  a) EVIDENCE INTEGRITY — kill ONLY if the evidence actively CONTRADICTS
+     the solution, or the solution has ZERO supporting evidence of any
+     kind. This is deliberately NOT "does the evidence prove this exact
+     problem exists" — the public sources this system can reach (app-
+     store reviews, forum posts, industry commentary) give SIGNALS, not
+     statistical proof, and demanding proof from a source that only ever
+     offers signal is rigid, not rigorous. Observed failure (the fix this
+     replaces): a criterion asking "does this evidence show THIS PROBLEM
+     EXISTS for this company" killed 4 of 5 candidate solutions on a real
+     run, with reasons like "the source only lists available payment
+     methods; it does not prove users abandon because preferred methods
+     are missing" — that source was never going to meet a proof standard,
+     and a PM reading a payment-method complaint doesn't discard it, they
+     turn it into a testable hypothesis. A surviving solution instead gets
+     a signal_strength label (direct / adjacent / inferred — see
+     SYSTEM_PROMPT) so the reader can see how strong the evidentiary basis
+     actually is, without the solution being deleted over it.
   b) MECHANISM — does the feature's mechanism plausibly move the target
      metric FOR THE POPULATION IT ACTUALLY REACHES? "Better streaming
      quality -> more first-time adoption" is a weak chain: streaming
@@ -28,13 +38,14 @@ THREE TESTS, ONE VERDICT PER SOLUTION (promote / keep / kill):
      described? effort=1 for infrastructure/quality work is what put a
      badly-supported feature at the top of a RICE-sorted list.
 
-kill: fails (a), or fails (b) badly, or the effort estimate isn't
-credible enough to trust the RICE score at all. Killed solutions are
-DROPPED, NOT DELETED — same treatment as "already exists" and constraint
-violations (see agents/solution_framing.py): moved to
-state['dropped_solutions'] with drop_reason="solution review: <reason>",
-rendered in tools/brief.py's "Considered and dropped" -> "Killed on
-review" section, not silently discarded.
+kill: evidence CONTRADICTS the solution, or there is ZERO supporting
+evidence, or (b) fails badly, or the effort estimate isn't credible
+enough to trust the RICE score at all. Killed solutions are DROPPED, NOT
+DELETED — same treatment as "already exists" and constraint violations
+(see agents/solution_framing.py): moved to state['dropped_solutions']
+with drop_reason="solution review: <reason>", rendered in tools/brief.py's
+"Considered and dropped" -> "Killed on review" section, not silently
+discarded.
 
 MOSCOW AND THE HEADER ARE RECOMPUTED AFTER KILLS, NOT INHERITED:
 agents/pm.py's _assign_moscow/_build_header are both relative to a
@@ -71,16 +82,42 @@ _AUTO_PROMOTE_REASON = (
 
 AGENT_NAME = "solution_review"
 ALLOWED_VERDICTS = {"promote", "keep", "kill"}
+ALLOWED_SIGNAL_STRENGTHS = {"direct", "adjacent", "inferred"}
+DEFAULT_SIGNAL_STRENGTH = "inferred"  # safe/conservative default when the LLM omits or misclassifies
 
-SYSTEM_PROMPT = """You are a skeptical PM doing a final review before a
-PRD ships. For each candidate below, decide: promote / keep / kill.
+SYSTEM_PROMPT = """You are a skeptical-but-fair PM doing a final review
+before a PRD ships. For each candidate below, decide: promote / keep /
+kill.
 
 Apply three tests:
-a) PROBLEM EXISTS FOR THIS COMPANY: does the cited evidence show this
-   specific problem exists for THIS company, or only that the general
-   topic/technology exists somewhere? A claim about a competitor's
-   unrelated feature, or a generic industry statement, does NOT establish
-   the problem is real here.
+a) EVIDENCE INTEGRITY: kill ONLY if the cited evidence actively
+   CONTRADICTS the solution's premise, or the solution has ZERO
+   supporting evidence of any kind. Do NOT kill just because the
+   evidence falls short of proving the problem outright — the sources
+   available here (app-store reviews, forum posts, industry commentary)
+   give SIGNALS, not statistical proof, and were never going to meet a
+   proof standard. Turning a real signal into a testable hypothesis is
+   the job; rejecting it for not already being the answer is not rigor,
+   it's rigid thinking.
+
+   If the solution survives this test, label its signal_strength:
+     - "direct": the evidence names this specific problem/friction point
+       for this company.
+     - "adjacent": the evidence shows a real, related friction point that
+       plausibly bears on the stated problem, even though it doesn't name
+       it directly. Example: evidence says "users complain heavily about
+       return and exchange policy" — a solution proposing return-policy
+       reassurance at the Cart stage (to reduce commitment anxiety and
+       improve Proceed-to-Checkout rate) is ADJACENT, not a kill, even
+       though the evidence never says "checkout."
+     - "inferred": the evidence is general to the industry/category, not
+       specific to this company, but is still a reasonable basis for a
+       hypothesis.
+   Each candidate's evidence_rationale (written by the solution-framing
+   step) already explains its author's reasoning for how the cited
+   evidence bears on the problem — read it before judging; it often
+   already states the inferential step that makes a signal "adjacent"
+   rather than "direct."
 b) MECHANISM: does the feature's mechanism plausibly move the target
    metric, for the population it actually reaches? A feature that only
    affects existing/active users cannot plausibly move a first-time-
@@ -91,21 +128,32 @@ c) EFFORT CREDIBILITY: is the effort estimate (in person-months) credible
    low effort is not credible and should be treated as understated, not
    taken at face value — that alone is grounds to distrust the RICE score.
 
-kill: fails (a), or fails (b) badly, or the effort estimate isn't
-credible enough to trust the RICE score at all.
-keep: evidence and mechanism are plausible but not strong — ships, but
-weaker than "promote".
-promote: evidence clearly supports the problem being real, the mechanism
-is a direct, traceable path to the target metric, and the effort
-estimate is credible.
+kill: evidence CONTRADICTS the solution, or there is ZERO supporting
+evidence, or (b) fails badly, or the effort estimate isn't credible
+enough to trust the RICE score at all.
+keep: survives (a) with signal_strength "adjacent" or "inferred", or (b)/
+(c) are only weakly credible — ships, but weaker than "promote".
+promote: signal_strength is "direct", the mechanism is a clear, traceable
+path to the target metric, and the effort estimate is credible.
 
 Respond with ONLY a JSON object of this exact shape:
 {
   "verdicts": [
-    {"solution_id": "S1", "verdict": "promote|keep|kill", "reason": "<1-3 sentences>"}
+    {"solution_id": "S1", "verdict": "promote|keep|kill", "signal_strength": "direct|adjacent|inferred", "reason": "<1-3 sentences>"}
   ]
 }
+signal_strength is required for "promote"/"keep" verdicts; omit it (or
+leave empty) for "kill".
 """
+
+
+def _normalize_signal_strength(raw_value) -> str:
+    """Never trust an invented label -- validated against the fixed
+    allowed set, falling back to the most conservative claim (DEFAULT_SIGNAL_STRENGTH)
+    rather than the strongest one when the LLM omits or misclassifies it."""
+    if isinstance(raw_value, str) and raw_value.strip().lower() in ALLOWED_SIGNAL_STRENGTHS:
+        return raw_value.strip().lower()
+    return DEFAULT_SIGNAL_STRENGTH
 
 
 @with_retry()
@@ -152,6 +200,7 @@ def _build_candidates(solutions: list[dict], features: list[dict]) -> tuple[list
             "solution_id": solution.get("id"),
             "name": solution.get("name"),
             "problem_addressed": solution.get("problem_addressed"),
+            "evidence_rationale": solution.get("evidence_rationale", ""),
             "evidence": _resolve_evidence(solution.get("finding_ids", [])),
             "feature": {
                 "name": feature.get("name"),
@@ -173,12 +222,13 @@ def solution_review_node(state: dict) -> dict:
     auto-promoted without ever reaching the LLM (see module docstring).
 
     Reads: state['solutions'], state['prd'], state['dropped_solutions']
-    Writes: state['solutions'] (kills removed), state['dropped_solutions']
+    Writes: state['solutions'] (kills removed; survivors gain
+    signal_strength: direct/adjacent/inferred), state['dropped_solutions']
     (kills appended, drop_reason="solution review: <reason>"), state['prd']
-    (killed features removed from prd['features']; moscow and header both
-    recomputed against the surviving features, not inherited from pm_node's
-    pre-kill pass), state['solutions_reviewed']=True, state['messages'],
-    state['run_path']
+    (killed features removed from prd['features']; survivors gain the same
+    signal_strength; moscow and header both recomputed against the
+    surviving features, not inherited from pm_node's pre-kill pass),
+    state['solutions_reviewed']=True, state['messages'], state['run_path']
     """
     solutions = state.get("solutions", [])
     prd = state.get("prd") or {}
@@ -225,6 +275,10 @@ def solution_review_node(state: dict) -> dict:
         solution = dict(solution)
         solution["review_verdict"] = verdict_entry["verdict"]
         solution["review_reason"] = verdict_entry.get("reason", "")
+        # Auto-promoted (is_instrumentation) solutions have no evidence by
+        # construction -- signal_strength doesn't apply to them, left unset.
+        if solution.get("id") not in auto_promoted_ids:
+            solution["signal_strength"] = _normalize_signal_strength(verdict_entry.get("signal_strength"))
         kept_solutions.append(solution)
 
     # A kill changes the feature SET, and moscow/header are both computed
@@ -237,7 +291,14 @@ def solution_review_node(state: dict) -> dict:
     # elsewhere in this file.
     from agents.pm import _assign_moscow, _build_header
 
+    signal_strength_by_solution_id = {
+        s.get("id"): s["signal_strength"] for s in kept_solutions if s.get("signal_strength")
+    }
     surviving_features = [f for f in features if f.get("addresses_solution") not in killed_solution_ids]
+    for feature in surviving_features:
+        strength = signal_strength_by_solution_id.get(feature.get("addresses_solution"))
+        if strength:
+            feature["signal_strength"] = strength
     _assign_moscow(surviving_features)
 
     updated_prd = dict(prd)
@@ -256,6 +317,9 @@ def solution_review_node(state: dict) -> dict:
         killed_count=len(killed_solution_ids),
         promoted_count=sum(1 for v in verdicts_by_id.values() if v["verdict"] == "promote"),
         kept_count=sum(1 for v in verdicts_by_id.values() if v["verdict"] == "keep"),
+        direct_count=sum(1 for s in kept_solutions if s.get("signal_strength") == "direct"),
+        adjacent_count=sum(1 for s in kept_solutions if s.get("signal_strength") == "adjacent"),
+        inferred_count=sum(1 for s in kept_solutions if s.get("signal_strength") == "inferred"),
     )
 
     return {
